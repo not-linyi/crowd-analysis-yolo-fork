@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BRT 人群分析系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .header {
+            background-color: #1e1e1e;
+            padding: 15px 0;
+            border-bottom: 2px solid #ffc800;
+            margin-bottom: 20px;
+        }
+        .video-container {
+            position: relative;
+            margin: 0 auto;
+            max-width: 1280px;
+        }
+        #video-feed {
+            width: 100%;
+            border: 1px solid #333;
+            border-radius: 5px;
+        }
+        .stats-panel {
+            background-color: rgba(30, 30, 30, 0.8);
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .stats-title {
+            color: #ffc800;
+            border-bottom: 1px solid #ffc800;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .stat-item {
+            margin-bottom: 10px;
+        }
+        .polygon-controls {
+            background-color: rgba(30, 30, 30, 0.8);
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .btn-primary {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+        }
+        .btn-warning {
+            background-color: #ffc800;
+            border-color: #ffc800;
+            color: #000;
+        }
+        #canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .draggable-point {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #ffc800;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 20;
+        }
+        #polygon-points {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 15;
+        }
+        .footer {
+            background-color: #1e1e1e;
+            padding: 15px 0;
+            margin-top: 20px;
+            border-top: 1px solid #333;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1 class="text-center">BRT 人群分析系统</h1>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-md-8">
+                <div class="video-container">
+                    <img id="video-feed" src="{{ url_for('video_feed') }}" alt="视频流">
+                    <canvas id="canvas-overlay"></canvas>
+                    <div id="polygon-points"></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stats-panel">
+                    <h3 class="stats-title">实时统计</h3>
+                    <div class="stat-item">
+                        <strong>当前人数:</strong> <span id="current-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <strong>最大人数:</strong> <span id="max-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <strong>平均人数:</strong> <span id="avg-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <strong>FPS:</strong> <span id="fps">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <strong>运行时间:</strong> <span id="runtime">00:00:00</span>
+                    </div>
+                    <div class="progress mt-3">
+                        <div id="threshold-progress" class="progress-bar bg-success" role="progressbar" style="width: 0" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <div class="text-end mt-1">
+                        <small>阈值: <span id="threshold-percentage">0%</span></small>
+                    </div>
+                </div>
+
+                <div class="polygon-controls">
+                    <h3 class="stats-title">多边形控制</h3>
+                    <p>您可以通过拖动多边形的顶点来调整计数区域。</p>
+                    <div class="d-grid gap-2">
+                        <button id="reset-polygon" class="btn btn-warning">重置多边形</button>
+                        <button id="save-polygon" class="btn btn-primary">保存多边形</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <p>© 2023 BRT 人群分析系统 - 仅供教育使用</p>
+                </div>
+                <div class="col-md-6 text-end">
+                    <p id="current-time"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 初始多边形坐标
+        let polygonPoints = [];
+        const defaultPolygon = [[827, 155], [1261, 457], [774, 695], [610, 193]];
+        let draggingPoint = null;
+        let draggingPointIndex = -1;
+
+        // 获取元素
+        const videoFeed = document.getElementById('video-feed');
+        const canvasOverlay = document.getElementById('canvas-overlay');
+        const polygonPointsContainer = document.getElementById('polygon-points');
+        const resetPolygonBtn = document.getElementById('reset-polygon');
+        const savePolygonBtn = document.getElementById('save-polygon');
+
+        // 统计数据元素
+        const currentCountEl = document.getElementById('current-count');
+        const maxCountEl = document.getElementById('max-count');
+        const avgCountEl = document.getElementById('avg-count');
+        const fpsEl = document.getElementById('fps');
+        const runtimeEl = document.getElementById('runtime');
+        const thresholdProgressEl = document.getElementById('threshold-progress');
+        const thresholdPercentageEl = document.getElementById('threshold-percentage');
+        const currentTimeEl = document.getElementById('current-time');
+
+        // 初始化
+        function init() {
+            // 设置canvas大小
+            function resizeCanvas() {
+                canvasOverlay.width = videoFeed.clientWidth;
+                canvasOverlay.height = videoFeed.clientHeight;
+                renderPolygon();
+                updateDraggablePoints();
+            }
+
+            // 监听视频加载
+            videoFeed.onload = function() {
+                resizeCanvas();
+            };
+
+            // 监听窗口大小变化
+            window.addEventListener('resize', resizeCanvas);
+
+            // 获取初始多边形
+            fetch('/get_polygon')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.polygon) {
+                        polygonPoints = data.polygon;
+                    } else {
+                        polygonPoints = defaultPolygon;
+                    }
+                    resizeCanvas();
+                })
+                .catch(error => {
+                    console.error('获取多边形失败:', error);
+                    polygonPoints = defaultPolygon;
+                    resizeCanvas();
+                });
+
+            // 重置多边形
+            resetPolygonBtn.addEventListener('click', function() {
+                polygonPoints = defaultPolygon;
+                renderPolygon();
+                updateDraggablePoints();
+            });
+
+            // 保存多边形
+            savePolygonBtn.addEventListener('click', function() {
+                fetch('/update_polygon', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ polygon: polygonPoints }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) {
+                        console.error('保存失败: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('保存多边形失败:', error);
+                });
+            });
+
+            // 定时更新统计数据
+            setInterval(updateStats, 1000);
+            
+            // 更新当前时间
+            setInterval(updateCurrentTime, 1000);
+            updateCurrentTime();
+
+            // 监听空格键事件
+            document.addEventListener('keydown', function(event) {
+                if (event.keyCode === 32) { // 空格键
+                    fetch('/toggle_pause', {
+                        method: 'POST',
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('视频暂停状态:', data.is_paused ? '暂停' : '播放');
+                    })
+                    .catch(error => {
+                        console.error('切换暂停状态失败:', error);
+                    });
+                    event.preventDefault(); // 阻止空格键的默认行为（如页面滚动）
+                }
+            });
+        }
+
+        // 渲染多边形
+        function renderPolygon() {
+            const ctx = canvasOverlay.getContext('2d');
+            ctx.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+            
+            // 计算缩放比例
+            const scaleX = canvasOverlay.width / 1280;
+            const scaleY = canvasOverlay.height / 720;
+            
+            if (polygonPoints.length > 0) {
+                ctx.beginPath();
+                
+                // 移动到第一个点
+                const firstPoint = polygonPoints[0];
+                ctx.moveTo(firstPoint[0] * scaleX, firstPoint[1] * scaleY);
+                
+                // 连接其他点
+                for (let i = 1; i < polygonPoints.length; i++) {
+                    const point = polygonPoints[i];
+                    ctx.lineTo(point[0] * scaleX, point[1] * scaleY);
+                }
+                
+                // 闭合路径
+                ctx.closePath();
+                
+                // 设置样式并绘制
+                ctx.strokeStyle = '#0d6efd';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // 填充半透明区域
+                ctx.fillStyle = 'rgba(13, 110, 253, 0.2)';
+                ctx.fill();
+            }
+        }
+
+        // 更新可拖动点
+        function updateDraggablePoints() {
+            // 清除现有点
+            polygonPointsContainer.innerHTML = '';
+            
+            // 计算缩放比例
+            const scaleX = canvasOverlay.width / 1280;
+            const scaleY = canvasOverlay.height / 720;
+            
+            // 为每个点创建可拖动元素
+            polygonPoints.forEach((point, index) => {
+                const pointEl = document.createElement('div');
+                pointEl.className = 'draggable-point';
+                pointEl.style.left = (point[0] * scaleX - 5) + 'px';
+                pointEl.style.top = (point[1] * scaleY - 5) + 'px';
+                pointEl.dataset.index = index;
+                
+                // 鼠标事件
+                pointEl.addEventListener('mousedown', startDragging);
+                
+                polygonPointsContainer.appendChild(pointEl);
+            });
+        }
+
+        // 开始拖动
+        function startDragging(e) {
+            draggingPoint = e.target;
+            draggingPointIndex = parseInt(draggingPoint.dataset.index);
+            
+            // 添加事件监听
+            document.addEventListener('mousemove', dragPoint);
+            document.addEventListener('mouseup', stopDragging);
+            
+            // 阻止默认行为和冒泡
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // 拖动点
+        function dragPoint(e) {
+            if (!draggingPoint) return;
+            
+            // 获取视频容器的位置
+            const rect = videoFeed.getBoundingClientRect();
+            
+            // 计算相对位置
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+            
+            // 限制在视频范围内
+            x = Math.max(0, Math.min(x, canvasOverlay.width));
+            y = Math.max(0, Math.min(y, canvasOverlay.height));
+            
+            // 更新点位置
+            draggingPoint.style.left = (x - 5) + 'px';
+            draggingPoint.style.top = (y - 5) + 'px';
+            
+            // 计算缩放比例
+            const scaleX = 1280 / canvasOverlay.width;
+            const scaleY = 720 / canvasOverlay.height;
+            
+            // 更新多边形点坐标
+            polygonPoints[draggingPointIndex] = [Math.round(x * scaleX), Math.round(y * scaleY)];
+            
+            // 重新渲染多边形
+            renderPolygon();
+        }
+
+        // 停止拖动
+        function stopDragging() {
+            draggingPoint = null;
+            draggingPointIndex = -1;
+            
+            // 移除事件监听
+            document.removeEventListener('mousemove', dragPoint);
+            document.removeEventListener('mouseup', stopDragging);
+        }
+
+        // 更新统计数据
+        function updateStats() {
+            fetch('/get_stats')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.error) {
+                        currentCountEl.textContent = data.current_count;
+                        maxCountEl.textContent = data.max_count;
+                        avgCountEl.textContent = data.avg_count;
+                        fpsEl.textContent = data.fps;
+                        runtimeEl.textContent = data.runtime;
+                        
+                        // 更新阈值进度条
+                        const threshold = data.threshold || 40;
+                        const percentage = data.threshold_percentage || Math.min(Math.round((data.current_count / threshold) * 100), 100);
+                        thresholdProgressEl.style.width = percentage + '%';
+                        thresholdPercentageEl.textContent = percentage + '%';
+                        
+                        // 根据百分比更改颜色
+                        if (percentage < 60) {
+                            thresholdProgressEl.className = 'progress-bar bg-success';
+                        } else if (percentage < 90) {
+                            thresholdProgressEl.className = 'progress-bar bg-warning';
+                        } else {
+                            thresholdProgressEl.className = 'progress-bar bg-danger';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('获取统计数据失败:', error);
+                    // 错误重试
+                    setTimeout(updateStats, 2000);
+                });
+        }
+
+        // 更新当前时间
+        function updateCurrentTime() {
+            const now = new Date();
+            currentTimeEl.textContent = now.toLocaleString();
+        }
+
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

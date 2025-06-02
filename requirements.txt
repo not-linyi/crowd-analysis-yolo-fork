@@ -1,2 +1,8 @@
-ultralytics~=8.3.146
-opencv-python~=4.11.0.86
+
+numpy>=1.22.0
+pandas>=1.4.0
+opencv-python>=4.5.5
+ultralytics>=8.0.0
+
+
+flask>=2.0.0
