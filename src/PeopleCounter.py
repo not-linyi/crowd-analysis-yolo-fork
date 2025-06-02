@@ -1,6 +1,8 @@
 
 import time
 from datetime import datetime
+import threading
+import queue
 
 import cv2
 import numpy as np
@@ -11,6 +13,9 @@ from ultralytics import YOLO
 class PeopleCounter:
 
     def __init__(self, model_path, video_path=None, class_file=None, threshold=40):
+        self.frame_queue = queue.Queue(maxsize=5)  # 帧队列，限制大小以避免内存溢出
+        self.stop_event = threading.Event()  # 停止事件
+        self.read_thread = None  # 读取线程
         """
         初始化人群计数器
 
@@ -160,10 +165,6 @@ class PeopleCounter:
         # 绘制多边形
         cv2.polylines(display_frame, [np.array(self.area1, np.int32)], True, self.colors['polygon'], 2)
 
-        # 绘制多边形顶点
-        for point in self.area1:
-            cv2.circle(display_frame, point, 5, self.colors['accent'], -1)
-
         # 添加透明叠加层以突出显示计数区域
         overlay = display_frame.copy()
         cv2.fillPoly(overlay, [np.array(self.area1, np.int32)], (100, 100, 100))
@@ -174,54 +175,37 @@ class PeopleCounter:
 
         return display_frame
 
-    def run(self, skip_frames=3):
-        """
-        运行人群计数器
-
-        参数:
-            skip_frames (int): 跳帧数
-        """
+    def _read_frames(self, skip_frames=3):
         if not self.video_path:
             raise ValueError("视频路径未设置")
 
-        # 打开视频文件
         cap = cv2.VideoCapture(self.video_path)
-
         count = 0
-        # 存储每帧处理的人数统计
-        frame_counts = []
 
-        while True:
-            # 读取下一帧
+        while not self.stop_event.is_set():
             ret, frame = cap.read()
-
             if not ret:
                 break
 
             count += 1
-
             if count % skip_frames != 0:
                 continue
 
-            # 缩放帧以适应窗口
             frame = cv2.resize(frame, (1280, 720))
-
-            # 使用process_frame处理帧
-            processed_frame = self.process_frame(frame)
-
-            # 显示处理后的帧
-            cv2.imshow("BRT人群分析系统", processed_frame)
-
-            # 按ESC键退出
-            if cv2.waitKey(1) == 27:
-                break
-
-            # 获取当前计数并添加到历史记录
-            current_count = len(self.count_history) > 0 and self.count_history[-1] or 0
-            frame_counts.append(current_count)
+            try:
+                self.frame_queue.put(frame, timeout=1)  # 放入队列，设置超时
+            except queue.Full:
+                continue  # 队列满时跳过当前帧
 
         cap.release()
-        cv2.destroyAllWindows()
+
+    def run(self, skip_frames=3):
+        self.stop_event.clear()
+        self.read_thread = threading.Thread(target=self._read_frames, args=(skip_frames,))
+        self.read_thread.start()
+
+        # 存储每帧处理的人数统计
+        frame_counts = []
 
         return frame_counts
 
@@ -272,3 +256,8 @@ class PeopleCounter:
             list: 多边形顶点列表
         """
         return self.area1
+
+    def stop(self):
+        self.stop_event.set()
+        if self.read_thread and self.read_thread.is_alive():
+            self.read_thread.join()

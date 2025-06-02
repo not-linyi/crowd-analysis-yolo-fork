@@ -1,5 +1,8 @@
 import os
 import cv2
+import atexit
+import time
+import queue
 from flask import Flask, Response, render_template, jsonify, request
 from src.PeopleCounter import PeopleCounter
 
@@ -14,45 +17,28 @@ class_file = os.path.join(base_dir, "classes.txt")
 # 初始化人群计数器
 counter = PeopleCounter(model_path, video_path, class_file, threshold=40)
 
-# 视频捕获对象
-cap = None
-
 is_paused = False  # 控制视频播放/暂停状态
-
-
-def init_video():
-    """初始化视频捕获"""
-    global cap
-    if cap is not None:
-        cap.release()
-    cap = cv2.VideoCapture(video_path)
-    return cap
 
 
 def generate_frames():
     """生成视频帧"""
-    global cap, is_paused
-    if cap is None or not cap.isOpened():
-        cap = init_video()
-
-    skip_frames = 3
-    frame_count = 0
+    global is_paused
     last_frame_bytes = None
+
+    # 启动帧读取线程
+    if counter.read_thread is None or not counter.read_thread.is_alive():
+        counter.run()  # 启动读取线程
 
     while True:
         if not is_paused:
-            success, frame = cap.read()
-            if not success:
-                # 视频结束，重新开始
-                cap = init_video()
+            try:
+                frame = counter.frame_queue.get(timeout=1)  # 从队列获取帧
+            except queue.Empty:
+                # 队列为空时，尝试重新启动读取线程或等待
+                if not counter.read_thread.is_alive():
+                    counter.run()  # 重新启动读取线程
+                time.sleep(0.01)  # 短暂等待
                 continue
-
-            frame_count += 1
-            if frame_count % skip_frames != 0:
-                continue
-
-            # 调整帧大小
-            frame = cv2.resize(frame, (1280, 720))
 
             # 处理帧
             processed_frame = counter.process_frame(frame)
@@ -66,6 +52,7 @@ def generate_frames():
             if last_frame_bytes:
                 frame_bytes = last_frame_bytes
             else:
+                time.sleep(0.1)  # 暂停时如果没有帧，则短暂等待
                 continue
 
         # 以流的形式返回帧
@@ -126,6 +113,8 @@ def toggle_pause():
     is_paused = not is_paused
     return jsonify({"is_paused": is_paused})
 
+
+atexit.register(counter.stop)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
