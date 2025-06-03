@@ -458,7 +458,7 @@ class PeopleCounter:
             cv2.resizeWindow("Crowd Analysis", 1280, 720)
             cv2.setMouseCallback('Crowd Analysis', self.mouse_callback)
 
-    # 打开视频文件
+        # 打开视频文件
         cap = cv2.VideoCapture(self.video_path)
 
         count = 0
@@ -534,8 +534,18 @@ class PeopleCounter:
 
                 # 显示
                 cv2.imshow("Crowd Analysis", display_frame)
-                if cv2.waitKey(1) & 0xFF == 27:  # ESC键退出
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:  # ESC键退出
                     break
+                elif key == 32:  # 空格键暂停
+                    while True:
+                        key2 = cv2.waitKey(0) & 0xFF
+                        if key2 == 32:  # 再次按空格继续
+                            break
+                        elif key2 == 27:  # 按ESC直接退出
+                            cap.release()
+                            cv2.destroyAllWindows()
+                            return frame_counts
 
         cap.release()
 
@@ -546,11 +556,38 @@ class PeopleCounter:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    # 命令行参数解析
+    parser = argparse.ArgumentParser(description='人群计数与分析系统')
+    parser.add_argument('--video', type=str, help='视频文件路径', default=None)
+    parser.add_argument('--model', type=str, help='模型文件路径', default=None)
+    parser.add_argument('--classes', type=str, help='类别文件路径', default=None)
+    parser.add_argument('--threshold', type=int, help='人群数量阈值', default=40)
+    parser.add_argument('--skip', type=int, help='跳帧数', default=3)
+    args = parser.parse_args()
+
     # 获取相对于脚本位置的路径
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    model_path = os.path.join(base_dir, "models", "best.pt")
-    video_path = os.path.join(base_dir, "test.mp4")
-    class_file = os.path.join(base_dir, "classes.txt")
 
-    counter = PeopleCounter(model_path, video_path, class_file, threshold=40)
-    counter.run(display=True)
+    # 使用命令行参数或默认值
+    model_path = args.model if args.model else os.path.join(base_dir, "models", "best.pt")
+    video_path = args.video if args.video else os.path.join(base_dir, "test.mp4")
+    class_file = args.classes if args.classes else os.path.join(base_dir, "classes.txt")
+
+    print(f"启动人群计数与分析系统...")
+    print(f"模型路径: {model_path}")
+    print(f"视频路径: {video_path}")
+    print(f"类别文件: {class_file}")
+    print(f"人群阈值: {args.threshold}")
+    print(f"跳帧数: {args.skip}")
+
+    counter = PeopleCounter(
+        model_path=model_path,
+        video_path=video_path,
+        class_file=class_file,
+        threshold=args.threshold,
+    )
+
+    # 运行
+    counter.run(display=True, skip_frames=args.skip)

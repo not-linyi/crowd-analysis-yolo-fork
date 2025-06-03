@@ -1,6 +1,7 @@
 # 草履虫DQYのYOLO速通术
 
 > 本项目出于学习YOLO目的，复刻自[BRT Crowd Analysis System by Hassan Raza](https://github.com/hassanrrraza/crowd-analysis-yolo)
+> Web分支除外，Web分支是草履虫DQY基于自己的想法~~瞎写的~~研究Web端的学习试水作
 
 本项目仅用于记录本人YOLO学习的过程
 啊，我速通YOLO，真的假的，要上吗？
